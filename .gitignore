@@ -1,0 +1,6 @@
+.env
+node_modules/
+input/
+output/
+.DS_Store
+.claude/
