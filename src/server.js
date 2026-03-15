@@ -9,6 +9,7 @@ const crypto = require('crypto');
 
 const { parseCDSL } = require('./parser');
 const { enrichHoldings } = require('./funds');
+const { fetchBenchmarks } = require('./benchmarks');
 const { analyzeRisk } = require('./risk');
 const { generateNarrative } = require('./narrative');
 
@@ -84,11 +85,14 @@ async function processPortfolio(pdfBuffer, pan, jobId) {
       return emit(jobId, { type: 'error', message: 'No holdings found. Check your PAN number or statement format.' });
     }
 
-    emit(jobId, { type: 'progress', step: 2, message: `Found ${allHoldings.length} funds. Fetching live NAV data...` });
-    const enriched = await enrichHoldings(allHoldings);
+    emit(jobId, { type: 'progress', step: 2, message: `Found ${allHoldings.length} funds. Fetching live NAV data and benchmarks...` });
+    const [enriched, benchmarks] = await Promise.all([
+      enrichHoldings(allHoldings),
+      fetchBenchmarks(),
+    ]);
 
     emit(jobId, { type: 'progress', step: 3, message: 'Analysing portfolio risk and performance...' });
-    const riskAnalysis = analyzeRisk(enriched);
+    const riskAnalysis = analyzeRisk(enriched, benchmarks);
 
     emit(jobId, { type: 'progress', step: 4, message: 'Generating AI commentary...' });
     const narrative = await generateNarrative(parsed.summary, riskAnalysis);

@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { parseCDSL } = require('./parser');
 const { enrichHoldings } = require('./funds');
+const { fetchBenchmarks } = require('./benchmarks');
 const { analyzeRisk } = require('./risk');
 const { generateNarrative } = require('./narrative');
 
@@ -40,14 +41,17 @@ async function run() {
   const allHoldings = [...parsed.dematHoldings, ...parsed.folioHoldings];
   console.log(`  Found ${allHoldings.length} holdings (statement date: ${parsed.summary.asOn})\n`);
 
-  // Step 2: Fetch current NAV and performance data
-  console.log('Step 2: Fetching live NAV and historical returns...');
-  const enriched = await enrichHoldings(allHoldings);
+  // Step 2: Fetch current NAV, performance data, and benchmarks
+  console.log('Step 2: Fetching live NAV, historical returns, and benchmarks...');
+  const [enriched, benchmarks] = await Promise.all([
+    enrichHoldings(allHoldings),
+    fetchBenchmarks(),
+  ]);
   console.log('  Done.\n');
 
   // Step 3: Risk analysis
   console.log('Step 3: Analysing portfolio risk...');
-  const riskAnalysis = analyzeRisk(enriched);
+  const riskAnalysis = analyzeRisk(enriched, benchmarks);
   console.log(`  Total current value: ₹${riskAnalysis.totalCurrentValue.toLocaleString('en-IN')}`);
   console.log(`  Risk flags: ${riskAnalysis.riskFlags.length}\n`);
 
@@ -65,6 +69,26 @@ async function run() {
   console.log(report);
   console.log('='.repeat(60));
   console.log(`\nReport saved to: output/portfolio_report.txt`);
+}
+
+function formatBenchmarkRow(label, returns) {
+  if (!returns) return `  ${label.padEnd(24)}  ${'N/A'.padStart(6)}  ${'N/A'.padStart(6)}  ${'N/A'.padStart(6)}  ${'N/A'.padStart(6)}  ${'N/A'.padStart(8)}`;
+  const cols = ['1M', '3M', '6M', '1Y', '3Y_CAGR'].map(p => {
+    const v = returns[p];
+    return v != null ? `${v > 0 ? '+' : ''}${v}%`.padStart(p === '3Y_CAGR' ? 8 : 6) : 'N/A'.padStart(p === '3Y_CAGR' ? 8 : 6);
+  });
+  return `  ${label.padEnd(24)}  ${cols.join('  ')}`;
+}
+
+function formatDeltaRow(label, delta) {
+  if (!delta) return `  ${label.padEnd(24)}  ${'—'.padStart(6)}  ${'—'.padStart(6)}  ${'—'.padStart(6)}  ${'—'.padStart(6)}  ${'—'.padStart(8)}`;
+  const cols = ['1M', '3M', '6M', '1Y', '3Y_CAGR'].map(p => {
+    const v = delta[p];
+    if (v == null) return '—'.padStart(p === '3Y_CAGR' ? 8 : 6);
+    const sign = parseFloat(v) >= 0 ? '+' : '';
+    return `${sign}${v}%`.padStart(p === '3Y_CAGR' ? 8 : 6);
+  });
+  return `  ${label.padEnd(24)}  ${cols.join('  ')}`;
 }
 
 function buildReport(summary, riskAnalysis, narrative) {
@@ -104,6 +128,23 @@ function buildReport(summary, riskAnalysis, narrative) {
   });
 
   lines.push(`\n  Avg 1-month return across portfolio: ${riskAnalysis.avg1MReturn}%`);
+
+  lines.push('\n' + divider);
+  lines.push('\nBENCHMARK COMPARISON');
+  const header = `  ${''.padEnd(24)}  ${'1M'.padStart(6)}  ${'3M'.padStart(6)}  ${'6M'.padStart(6)}  ${'1Y'.padStart(6)}  ${'3Y CAGR'.padStart(8)}`;
+  lines.push(header);
+  lines.push(formatBenchmarkRow('Your Portfolio', riskAnalysis.portfolioWeightedReturns));
+  for (const { label, returns } of Object.values(riskAnalysis.benchmarkComparison)) {
+    lines.push(formatBenchmarkRow(label, returns));
+  }
+  lines.push('');
+  for (const { label, delta } of Object.values(riskAnalysis.benchmarkComparison)) {
+    if (!delta) continue;
+    const beats = Object.values(delta).filter(v => v != null && parseFloat(v) > 0).length;
+    const total = Object.values(delta).filter(v => v != null).length;
+    const verdict = beats === total ? '✓ Beat across all periods' : beats > total / 2 ? `✓ Beat in ${beats}/${total} periods` : `✗ Lagged in ${total - beats}/${total} periods`;
+    lines.push(formatDeltaRow(`Alpha vs ${label}`, delta) + `  ${verdict}`);
+  }
 
   lines.push('\n' + divider);
   lines.push('\nRISK FLAGS');

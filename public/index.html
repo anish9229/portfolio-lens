@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Portfolio Lens — AI Portfolio Analyser</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -194,6 +195,12 @@
     .narrative li { margin-bottom: 0.3rem; }
     .narrative hr { border: none; border-top: 1px solid var(--border); margin: 1.25rem 0; }
     .narrative em { color: var(--muted); font-style: italic; }
+
+    /* Benchmark chart */
+    .chart-wrap { position: relative; height: 280px; }
+    .benchmark-legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin-bottom: 1.25rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; font-weight: 500; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 
     /* New analysis button */
     .new-btn {
@@ -397,7 +404,7 @@
 
   // ── Render report ─────────────────────────────────────
   function renderReport({ summary, riskAnalysis, narrative }) {
-    const { fundBreakdown, categoryBreakdown, riskFlags, totalCurrentValue, avg1MReturn } = riskAnalysis;
+    const { fundBreakdown, categoryBreakdown, riskFlags, totalCurrentValue, avg1MReturn, portfolioWeightedReturns, benchmarkComparison } = riskAnalysis;
 
     // Holdings table
     const holdingsRows = fundBreakdown.map(f => {
@@ -491,6 +498,12 @@
       </div>
 
       <div class="card">
+        <div class="card-title">vs. Benchmarks</div>
+        <div class="benchmark-legend" id="benchmark-legend"></div>
+        <div class="chart-wrap"><canvas id="benchmark-chart"></canvas></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Risk Flags</div>
         ${flagsHtml}
       </div>
@@ -504,6 +517,10 @@
     section.innerHTML = html;
     show('report-section');
     hide('progress-section');
+
+    if (portfolioWeightedReturns && benchmarkComparison) {
+      renderBenchmarkChart(portfolioWeightedReturns, benchmarkComparison);
+    }
   }
 
   // ── Error & helpers ───────────────────────────────────
@@ -533,6 +550,78 @@
 
   function show(id) { document.getElementById(id).style.display = 'block'; }
   function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+  // ── Benchmark chart ───────────────────────────────────
+  let benchmarkChartInstance = null;
+
+  function renderBenchmarkChart(portfolioWeightedReturns, benchmarkComparison) {
+    const periods    = ['1M', '3M', '6M', '1Y', '3Y_CAGR'];
+    const labels     = ['1 Month', '3 Months', '6 Months', '1 Year', '3Y CAGR'];
+
+    const seriesColors = {
+      portfolio: '#4f46e5',
+      nifty50:   '#0891b2',
+      sensex:    '#d97706',
+      gold:      '#ca8a04',
+    };
+
+    const datasets = [
+      {
+        label: 'Your Portfolio',
+        data: periods.map(p => portfolioWeightedReturns[p] != null ? parseFloat(portfolioWeightedReturns[p]) : null),
+        backgroundColor: seriesColors.portfolio,
+        borderRadius: 4,
+      },
+      ...Object.entries(benchmarkComparison).map(([key, { label, returns }]) => ({
+        label,
+        data: returns ? periods.map(p => returns[p] != null ? parseFloat(returns[p]) : null) : periods.map(() => null),
+        backgroundColor: seriesColors[key] || '#9ca3af',
+        borderRadius: 4,
+      })),
+    ];
+
+    // Legend
+    const legendEl = document.getElementById('benchmark-legend');
+    const allSeries = [{ label: 'Your Portfolio', color: seriesColors.portfolio }, ...Object.entries(benchmarkComparison).map(([key, { label }]) => ({ label, color: seriesColors[key] || '#9ca3af' }))];
+    legendEl.innerHTML = allSeries.map(s => `<div class="legend-item"><div class="legend-dot" style="background:${s.color}"></div>${s.label}</div>`).join('');
+
+    const ctx = document.getElementById('benchmark-chart').getContext('2d');
+    if (benchmarkChartInstance) benchmarkChartInstance.destroy();
+
+    benchmarkChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.raw;
+                if (v == null) return `${ctx.dataset.label}: N/A`;
+                return `${ctx.dataset.label}: ${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { font: { size: 11 } },
+          },
+          y: {
+            grid: { color: '#f0f0f0' },
+            ticks: {
+              font: { size: 11 },
+              callback: (v) => `${v >= 0 ? '+' : ''}${v}%`,
+            },
+          },
+        },
+      },
+    });
+  }
 </script>
 </body>
 </html>

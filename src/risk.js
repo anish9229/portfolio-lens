@@ -14,7 +14,38 @@ function classifyFund(holding) {
   return 'Other';
 }
 
-function analyzeRisk(enrichedHoldings) {
+const PERIODS = ['1M', '3M', '6M', '1Y', '3Y_CAGR'];
+
+// Compute weighted portfolio return for each period, normalising over funds that have data
+function computeWeightedReturns(fundBreakdown) {
+  const weighted = {};
+  for (const period of PERIODS) {
+    const fundsWithData = fundBreakdown.filter(f => f.returns[period] != null);
+    if (fundsWithData.length === 0) { weighted[period] = null; continue; }
+    const totalWeight = fundsWithData.reduce((s, f) => s + f.weight, 0);
+    const value = fundsWithData.reduce((s, f) => s + (f.weight / totalWeight) * parseFloat(f.returns[period]), 0);
+    weighted[period] = value.toFixed(2);
+  }
+  return weighted;
+}
+
+// Compare portfolio returns vs each benchmark; positive delta = portfolio beat the benchmark
+function computeBenchmarkComparison(portfolioReturns, benchmarks) {
+  const comparison = {};
+  for (const [key, { label, returns }] of Object.entries(benchmarks)) {
+    if (!returns) { comparison[key] = { label, returns: null, delta: null }; continue; }
+    const delta = {};
+    for (const period of PERIODS) {
+      const p = portfolioReturns[period];
+      const b = returns[period];
+      delta[period] = (p != null && b != null) ? (parseFloat(p) - parseFloat(b)).toFixed(2) : null;
+    }
+    comparison[key] = { label, returns, delta };
+  }
+  return comparison;
+}
+
+function analyzeRisk(enrichedHoldings, benchmarks = {}) {
   const totalCurrentValue = enrichedHoldings.reduce((sum, h) => sum + (h.currentValue || 0), 0);
 
   // Per-fund breakdown
@@ -62,6 +93,10 @@ function analyzeRisk(enrichedHoldings) {
   const domesticValue = totalCurrentValue - intlValue;
   const intlWeight = parseFloat(((intlValue / totalCurrentValue) * 100).toFixed(2));
 
+  // Weighted portfolio returns and benchmark comparison
+  const portfolioWeightedReturns = computeWeightedReturns(fundBreakdown);
+  const benchmarkComparison = computeBenchmarkComparison(portfolioWeightedReturns, benchmarks);
+
   // Recent drawdown context (1M avg return across all funds)
   const fundsWithReturns = fundBreakdown.filter(f => f.returns['1M']);
   const avg1MReturn = fundsWithReturns.length > 0
@@ -81,6 +116,8 @@ function analyzeRisk(enrichedHoldings) {
     totalCurrentValue: parseFloat(totalCurrentValue.toFixed(2)),
     fundBreakdown,
     categoryBreakdown: categoryMap,
+    portfolioWeightedReturns,
+    benchmarkComparison,
     domesticVsInternational: {
       domestic: parseFloat(domesticValue.toFixed(2)),
       international: parseFloat(intlValue.toFixed(2)),
